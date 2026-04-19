@@ -1,144 +1,21 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Empire AI // Revenue Pulse</title>
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
-        body { 
-            background-color: #000505; 
-            color: #00f2ff; 
-            font-family: 'Share Tech Mono', monospace;
-            background-image: radial-gradient(circle at 50% 50%, #001a1a 0%, #000505 100%);
-            margin: 0;
-            overflow-x: hidden;
-        }
-        .stat-card { 
-            border: 1px solid rgba(0, 242, 255, 0.2); 
-            background: rgba(0, 242, 255, 0.02); 
-            backdrop-filter: blur(5px);
-            transition: all 0.3s ease;
-        }
-        .stat-card:hover { border-color: #00f2ff; box-shadow: 0 0 15px rgba(0, 242, 255, 0.2); }
-        .neon-glow { text-shadow: 0 0 10px rgba(0, 242, 255, 0.7); }
-        .error-overlay { background: rgba(127, 29, 29, 0.9); border-bottom: 2px solid #ff0000; }
-    </style>
-</head>
-<body class="p-4 md:p-10">
-    <div id="error-banner" class="hidden fixed top-0 left-0 w-full error-overlay text-white text-xs p-2 text-center font-bold z-50 uppercase tracking-widest">
-        ⚠ Connection Interrupted - Verify Empire Vault Status
-    </div>
+<script>
+    // THE EMPIRE V2 RADAR CONNECTION
+    const EMPIRE_API_URL = "https://empire-revenue-pulsev2.vercel.app/api/radar_nws";
 
-    <div class="max-w-6xl mx-auto">
-        <div class="flex flex-col md:flex-row justify-between items-center border-b border-cyan-900 pb-6 mb-10">
-            <div class="text-center md:text-left">
-                <h1 class="text-4xl md:text-6xl font-bold neon-glow tracking-tighter">REVENUE // PULSE</h1>
-                <p class="text-xs text-cyan-600 mt-2 uppercase tracking-[0.3em]">Empire AI Intelligence Wing</p>
-            </div>
-            <div class="mt-6 md:mt-0 text-center md:text-right border-l-0 md:border-l border-cyan-900 md:pl-8">
-                <div class="text-green-500 text-xs animate-pulse font-bold tracking-widest">● SYSTEM LIVE</div>
-                <div id="clock" class="text-cyan-400 text-xl mt-1">00:00:00</div>
-            </div>
-        </div>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-            <div class="stat-card rounded-lg p-8 relative overflow-hidden">
-                <div class="absolute top-0 right-0 p-2 text-[8px] text-cyan-900 tracking-widest uppercase">Vault_Primary</div>
-                <h3 class="text-xs uppercase text-cyan-500 mb-4 tracking-widest">Total Strikes</h3>
-                <div id="total-strikes" class="text-6xl font-bold text-white tracking-tighter">--</div>
-                <div class="mt-4 h-1 w-full bg-cyan-900 rounded-full overflow-hidden">
-                    <div class="h-full bg-cyan-400 animate-pulse" style="width: 65%"></div>
-                </div>
-            </div>
+    async function fetchRadarData() {
+        try {
+            console.log("Pinging V2 Radar...");
+            const response = await fetch(EMPIRE_API_URL);
+            const data = await response.json();
             
-            <div class="stat-card rounded-lg p-8 border-green-500/30">
-                <h3 class="text-xs uppercase text-green-500 mb-4 tracking-widest">Reports Forged</h3>
-                <div id="reports-forged" class="text-6xl font-bold text-white tracking-tighter">0</div>
-                <p class="text-[9px] text-green-900 mt-4 uppercase">Status: Automated Extraction Active</p>
-            </div>
-
-            <div class="stat-card rounded-lg p-8">
-                <h3 class="text-xs uppercase text-cyan-500 mb-4 tracking-widest">Solana Collected</h3>
-                <div class="text-6xl font-bold text-white tracking-tighter">0.00</div>
-                <p class="text-[9px] text-cyan-900 mt-4 uppercase">Network: SOL Mainnet</p>
-            </div>
-        </div>
-
-        <div class="stat-card rounded-lg p-8 border-cyan-900/50">
-            <div class="flex justify-between items-center mb-6 border-b border-cyan-900 pb-4">
-                <h3 class="text-sm uppercase text-cyan-400 tracking-widest font-bold">// LIVE TARGET FEED</h3>
-                <span class="text-[10px] text-cyan-800 uppercase tracking-tighter">Updating every 15s</span>
-            </div>
-            <ul id="strike-feed" class="space-y-6">
-                <li class="text-cyan-800 text-sm animate-pulse italic uppercase">Authenticating credentials...</li>
-            </ul>
-        </div>
-    </div>
-
-    <script>
-        // ARCHITECT CONFIGURATION
-        const SB_URL = 'https://clmuzwbagzcyymfqswbn.supabase.co';
-        const SB_KEY = 'sb_publishable_fFVaZgkLz7v8kQMtSJ1VKg_okCuKxyx';
-        
-        // INITIALIZE EMPIRE CLIENT
-        const _supabase = supabase.createClient(SB_URL, SB_KEY);
-
-        async function syncEmpire() {
-            try {
-                const { data, error } = await _supabase
-                    .from('radar_targets')
-                    .select('*')
-                    .order('created_at', { ascending: false });
-
-                if (error) throw error;
-
-                // CLEAR ERRORS
-                document.getElementById('error-banner').classList.add('hidden');
-
-                // UPDATE UI COUNTERS
-                document.getElementById('total-strikes').innerText = data.length || 0;
-                
-                // UPDATE LIVE FEED
-                const feed = document.getElementById('strike-feed');
-                if (!data || data.length === 0) {
-                    feed.innerHTML = '<li class="text-cyan-900 italic uppercase text-sm">Awaiting first atmospheric anomaly...</li>';
-                } else {
-                    feed.innerHTML = data.map(item => `
-                        <li class="flex flex-col md:flex-row justify-between items-start md:items-center border-l-2 border-cyan-500 pl-6 py-2 bg-white/5 rounded-r-lg">
-                            <div>
-                                <div class="text-white text-lg font-bold tracking-tight">${item.business_name || 'UNKNOWN TARGET'}</div>
-                                <div class="flex gap-4 mt-1">
-                                    <span class="text-[10px] text-cyan-400 uppercase tracking-widest">${item.storm_event || 'General Alert'}</span>
-                                    <span class="text-[10px] text-gray-500 font-mono tracking-tighter">${item.address || 'Location Hidden'}</span>
-                                </div>
-                            </div>
-                            <div class="mt-4 md:mt-0 text-right">
-                                <div class="inline-block px-3 py-1 bg-cyan-900/30 border border-cyan-500/50 text-[10px] text-cyan-400 font-bold uppercase tracking-widest rounded-full">
-                                    ${item.campaign_status || 'NEW'}
-                                </div>
-                            </div>
-                        </li>
-                    `).join('');
-                }
-
-            } catch (err) {
-                console.error("EMPIRE_SYNC_FAILURE:", err.message);
-                document.getElementById('error-banner').classList.remove('hidden');
-                document.getElementById('error-banner').innerText = `⚠ SYSTEM ERROR: ${err.message.toUpperCase()}`;
-            }
+            console.log("V2 Status:", data.status);
+            // Your existing map plotting code stays exactly the same below here
+            
+        } catch (error) {
+            console.error("V2 Connection Failed", error);
         }
+    }
 
-        // SYSTEM CLOCK
-        setInterval(() => {
-            document.getElementById('clock').innerText = new Date().toLocaleTimeString();
-        }, 1000);
-
-        // INITIALIZE AND SET POLLING
-        syncEmpire();
-        setInterval(syncEmpire, 15000); 
-    </script>
-</body>
-</html>
+    // Fire the engine on load
+    fetchRadarData();
+</script>
