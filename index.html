@@ -1,21 +1,652 @@
-<script>
-    // THE EMPIRE V2 RADAR CONNECTION
-    const EMPIRE_API_URL = "https://empire-revenue-pulsev2.vercel.app/api/radar_nws";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Empire AI | Revenue Pulse</title>
 
-    async function fetchRadarData() {
-        try {
-            console.log("Pinging V2 Radar...");
-            const response = await fetch(EMPIRE_API_URL);
-            const data = await response.json();
-            
-            console.log("V2 Status:", data.status);
-            // Your existing map plotting code stays exactly the same below here
-            
-        } catch (error) {
-            console.error("V2 Connection Failed", error);
-        }
+  <!--
+    ╔══════════════════════════════════════════════════════════╗
+    ║  SECURITY CHECKLIST — READ BEFORE DEPLOYING             ║
+    ╠══════════════════════════════════════════════════════════╣
+    ║  1. CREDENTIALS                                         ║
+    ║     The anon key is intentionally public-facing — it    ║
+    ║     is restricted by Row Level Security (RLS) policies. ║
+    ║     NEVER use the service_role key here.                ║
+    ║     Rotate your anon key if it was ever committed to    ║
+    ║     a public repo: Supabase → Settings → API → Regen.  ║
+    ║                                                         ║
+    ║  2. ROW LEVEL SECURITY (mandatory)                      ║
+    ║     Run in Supabase SQL editor:                         ║
+    ║       ALTER TABLE radar_targets                         ║
+    ║         ENABLE ROW LEVEL SECURITY;                      ║
+    ║       CREATE POLICY "public_read" ON radar_targets      ║
+    ║         FOR SELECT USING (true);                        ║
+    ║     Without this, anon key = full table access.         ║
+    ║                                                         ║
+    ║  3. CONTENT SECURITY POLICY                             ║
+    ║     Add this header on your server / CDN:               ║
+    ║       default-src 'self';                               
+    ║       script-src 'self' cdn.jsdelivr.net;               
+    ║       style-src  'self' fonts.googleapis.com;           
+    ║       font-src   fonts.gstatic.com;                     
+    ║       connect-src *.supabase.co wss://*.supabase.co;    
+    ║                                                         ║
+    ║  4. NO innerHTML WITH USER DATA                         ║
+    ║     All untrusted strings use textContent only.         
+    ║     XSS is not possible through feed / card values.     
+    ╚══════════════════════════════════════════════════════════╝
+  -->
+
+  <!-- Supabase SDK — pinned version, crossorigin for CORS safety -->
+  <script
+    src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.43.4/dist/umd/supabase.min.js"
+    crossorigin="anonymous"
+  ></script>
+
+  <!-- Typeface -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap" rel="stylesheet" />
+
+  <style>
+    /* ══════════════════════════════════════════════════════
+       DESIGN TOKENS
+    ══════════════════════════════════════════════════════ */
+    :root {
+      --bg:         #000000;
+      --surface:    #0b1416;
+      --cyan:       #00f2ff;
+      --cyan-mid:   #00b8c4;
+      --cyan-dark:  #004f55;
+      --green:      #39ff14;
+      --red:        #ff2d55;
+      --amber:      #ffb800;
+      --border:     rgba(0,242,255,0.13);
+      --glow-c:     0 0 8px rgba(0,242,255,0.45), 0 0 28px rgba(0,242,255,0.12);
+      --glow-g:     0 0 8px rgba(57,255,20,0.45),  0 0 28px rgba(57,255,20,0.12);
+      --font:       'Share Tech Mono', 'Courier New', monospace;
     }
 
-    // Fire the engine on load
-    fetchRadarData();
-</script>
+    /* ══════════════════════════════════════════════════════
+       RESET
+    ══════════════════════════════════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: var(--bg);
+      color: var(--cyan);
+      font-family: var(--font);
+      min-height: 100vh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* CRT scanlines */
+    body::after {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 9000;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(0,0,0,0.055) 2px, rgba(0,0,0,0.055) 4px
+      );
+    }
+    /* vignette */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 8999;
+      background: radial-gradient(ellipse at 50% 40%, transparent 50%, rgba(0,0,0,0.65) 100%);
+    }
+
+    /* ══════════════════════════════════════════════════════
+       HEADER
+    ══════════════════════════════════════════════════════ */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 32px 16px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(90deg, rgba(0,242,255,0.04), transparent 60%);
+      position: relative;
+    }
+    .header::after {
+      content: '';
+      position: absolute; bottom: -1px; left: 0;
+      width: 35%; height: 1px;
+      background: linear-gradient(90deg, var(--cyan), transparent);
+      opacity: 0.5;
+    }
+    .logo { display: flex; align-items: baseline; gap: 10px; }
+    .logo-name  { font-size: 18px; letter-spacing: 0.28em; color: var(--cyan); text-shadow: var(--glow-c); }
+    .logo-sep   { color: var(--cyan-dark); font-size: 14px; }
+    .logo-sub   { font-size: 10px; letter-spacing: 0.3em; color: var(--cyan-mid); opacity: 0.5; }
+    .header-meta { display: flex; align-items: center; gap: 24px; }
+    .live-badge {
+      display: flex; align-items: center; gap: 7px;
+      font-size: 10px; letter-spacing: 0.25em;
+      color: var(--green); text-shadow: var(--glow-g);
+    }
+    .live-dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green); box-shadow: var(--glow-g);
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; transform:scale(1); }
+      50%      { opacity:0.3; transform:scale(0.6); }
+    }
+    #clock { font-size: 11px; letter-spacing: 0.1em; color: var(--cyan-mid); opacity: 0.5; font-variant-numeric: tabular-nums; }
+
+    /* ══════════════════════════════════════════════════════
+       MAIN LAYOUT
+    ══════════════════════════════════════════════════════ */
+    .main { padding: 28px 32px 48px; max-width: 1400px; width: 100%; margin: 0 auto; }
+    .section-label {
+      font-size: 9px; letter-spacing: 0.45em;
+      color: var(--cyan-mid); opacity: 0.38;
+      text-transform: uppercase; margin-bottom: 14px;
+    }
+
+    /* ══════════════════════════════════════════════════════
+       ERROR BANNER
+    ══════════════════════════════════════════════════════ */
+    .error-banner {
+      display: none; align-items: center; gap: 10px;
+      margin-bottom: 20px; padding: 12px 18px;
+      border: 1px solid var(--red); background: rgba(255,45,85,0.06);
+      font-size: 11px; letter-spacing: 0.1em; color: var(--red);
+    }
+    .error-banner.visible { display: flex; }
+
+    /* ══════════════════════════════════════════════════════
+       METRIC CARDS
+    ══════════════════════════════════════════════════════ */
+    .cards {
+      display: grid; grid-template-columns: repeat(3,1fr);
+      gap: 14px; margin-bottom: 32px;
+    }
+    @media (max-width: 700px) { .cards { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 24px 22px 20px; position: relative; overflow: hidden;
+      transition: border-color 0.22s, box-shadow 0.22s; cursor: default;
+    }
+    .card::before {          /* accent bar */
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+      background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+      opacity: 0; transition: opacity 0.25s;
+    }
+    .card::after {           /* corner notch */
+      content: ''; position: absolute; bottom: 0; right: 0;
+      width: 20px; height: 20px;
+      border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    }
+    .card:hover { border-color: rgba(0,242,255,0.4); box-shadow: var(--glow-c); }
+    .card:hover::before { opacity: 1; }
+    .card--green::before { background: linear-gradient(90deg, transparent, var(--green), transparent); }
+    .card--green:hover   { border-color: rgba(57,255,20,0.4); box-shadow: var(--glow-g); }
+
+    .card-label { font-size: 9px; letter-spacing: 0.4em; color: var(--cyan-mid); opacity: 0.55; text-transform: uppercase; margin-bottom: 14px; }
+    .card-value { font-size: 44px; line-height: 1; color: var(--cyan); text-shadow: var(--glow-c); font-variant-numeric: tabular-nums; }
+    .card--green .card-value { color: var(--green); text-shadow: var(--glow-g); }
+    .card-value.is-loading   { font-size: 18px; color: var(--cyan-dark); animation: shimmer 1.3s ease-in-out infinite; }
+    @keyframes shimmer { 0%,100%{opacity:0.2} 50%{opacity:0.65} }
+    .card-sub { font-size: 9px; color: var(--cyan-mid); opacity: 0.28; margin-top: 10px; letter-spacing: 0.1em; }
+
+    /* ══════════════════════════════════════════════════════
+       LOWER GRID
+    ══════════════════════════════════════════════════════ */
+    .lower { display: grid; grid-template-columns: 1fr 300px; gap: 14px; align-items: start; }@media (max-width: 820px) { .lower { grid-template-columns: 1fr; } }
+
+    /* ══════════════════════════════════════════════════════
+       PANELS (shared)
+    ══════════════════════════════════════════════════════ */
+    .panel {
+      background: var(--surface); border: 1px solid var(--border);
+      position: relative; overflow: hidden;
+      display: flex; flex-direction: column; height: 500px;
+    }
+    .panel-bar { position: absolute; top: 0; left: 0; right: 0; height: 2px; }
+    .panel-bar--cyan  { background: linear-gradient(90deg, var(--cyan),  transparent 65%); opacity: 0.6; }
+    .panel-bar--green { background: linear-gradient(90deg, var(--green), transparent 65%); opacity: 0.6; }
+    .panel-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 20px 12px; border-bottom: 1px solid var(--border);
+      flex-shrink: 0; margin-top: 2px;
+    }
+    .panel-title { font-size: 10px; letter-spacing: 0.3em; text-transform: uppercase; }
+    .panel-title--cyan  { color: var(--cyan);  text-shadow: var(--glow-c); }
+    .panel-title--green { color: var(--green); text-shadow: var(--glow-g); }
+    .panel-meta { font-size: 9.5px; color: var(--cyan-mid); opacity: 0.35; letter-spacing: 0.1em; }
+
+    /* ── FEED ────────────────────────────────────────────── */
+    .feed-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .feed-empty {
+      flex: 1; display: flex; align-items: center; justify-content: center;
+      font-size: 11px; letter-spacing: 0.3em; color: var(--cyan-mid); opacity: 0.25;
+    }
+    .feed-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 20px; border-bottom: 1px solid rgba(0,242,255,0.05);
+      transition: background 0.18s;
+      animation: feed-in 0.38s cubic-bezier(0.23,1,0.32,1) both;
+    }
+    .feed-item:hover { background: rgba(0,242,255,0.04); }
+    @keyframes feed-in { from{opacity:0;transform:translateX(-10px)} to{opacity:1;transform:translateX(0)} }
+    /* stagger */
+    .feed-item:nth-child(1)  { animation-delay:0.04s }
+    .feed-item:nth-child(2)  { animation-delay:0.08s }
+    .feed-item:nth-child(3)  { animation-delay:0.12s }
+    .feed-item:nth-child(4)  { animation-delay:0.16s }
+    .feed-item:nth-child(5)  { animation-delay:0.20s }
+    .feed-item:nth-child(6)  { animation-delay:0.24s }
+    .feed-item:nth-child(7)  { animation-delay:0.28s }
+    .feed-item:nth-child(8)  { animation-delay:0.32s }
+    .feed-item:nth-child(9)  { animation-delay:0.36s }
+    .feed-item:nth-child(10) { animation-delay:0.40s }
+
+    .feed-num  { font-size:10px; color:var(--cyan-mid); opacity:0.3; width:20px; text-align:right; flex-shrink:0; font-variant-numeric:tabular-nums; }
+    .feed-dot  { width:6px; height:6px; border-radius:50%; background:var(--green); box-shadow:var(--glow-g); flex-shrink:0; animation:dot-blink 2.8s ease-in-out infinite; }
+    @keyframes dot-blink { 0%,70%,100%{opacity:1} 80%{opacity:0.12} }
+    .feed-name { flex:1; font-size:13px; color:var(--cyan); letter-spacing:0.04em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .feed-tag  { font-size:9px; letter-spacing:0.14em; padding:2px 7px; flex-shrink:0; }
+    .feed-tag--forged { color:var(--green); border:1px solid rgba(57,255,20,0.3); background:rgba(57,255,20,0.06); }
+    .feed-tag--open   { color:var(--cyan-mid); border:1px solid rgba(0,242,255,0.12); opacity:0.45; }
+    .feed-time { font-size:9.5px; color:var(--cyan-mid); opacity:0.28; flex-shrink:0; font-variant-numeric:tabular-nums; }
+
+    /* ── STATUS PANEL ────────────────────────────────────── */
+    .status-body { flex:1; overflow-y:auto; padding:4px 0; }
+    .status-body::-webkit-scrollbar       { width:3px; }
+    .status-body::-webkit-scrollbar-thumb { background:var(--cyan-dark); }
+    .stat-row {
+      display:flex; align-items:center; justify-content:space-between;
+      padding:11px 20px; gap:10px;
+      border-bottom:1px solid rgba(0,242,255,0.05);
+      transition:background 0.18s;
+    }
+    .stat-row:hover { background:rgba(0,242,255,0.04); }
+    .stat-divider   { height:1px; background:var(--border); margin:4px 20px; }
+    .stat-key { font-size:9.5px; letter-spacing:0.18em; color:var(--cyan-mid); opacity:0.45; text-transform:uppercase; }
+    .stat-val { font-size:12px; letter-spacing:0.06em; color:var(--cyan); font-variant-numeric:tabular-nums; text-align:right; }
+    .stat-val--green { color:var(--green); text-shadow:var(--glow-g); }
+    .stat-val--red   { color:var(--red); }
+    .stat-val--amber { color:var(--amber); }
+    .stat-val--dim   { opacity:0.35; }
+
+    /* ── FOOTER ──────────────────────────────────────────── */
+    .footer {
+      margin-top:36px; padding-top:14px; border-top:1px solid var(--border);
+      display:flex; justify-content:space-between;
+      font-size:9px; letter-spacing:0.2em; color:var(--cyan-mid); opacity:0.2;
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- ═══════════════════════════════════════════
+       HEADER
+  ═══════════════════════════════════════════ -->
+  <header class="header">
+    <div class="logo">
+      <span class="logo-name">REVENUE PULSE</span>
+      <span class="logo-sep">//</span>
+      <span class="logo-sub">EMPIRE AI · STRIKE HUD</span>
+    </div>
+    <div class="header-meta">
+      <span class="live-badge"><span class="live-dot"></span>LIVE</span>
+      <span id="clock"></span>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- error banner — hidden until a fetch fails -->
+    <div id="error-banner" class="error-banner" role="alert" aria-live="polite">
+      <span aria-hidden="true">⚠</span>
+      <span id="error-text"></span>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         METRIC CARDS
+    ═══════════════════════════════════════════ -->
+    <div class="section-label">// PRIMARY METRICS</div>
+    <div class="cards">
+
+      <div class="card">
+        <div class="card-label">Total Strikes</div>
+        <div class="card-value is-loading" id="val-strikes">LOADING...</div>
+        <div class="card-sub">radar_targets · all rows</div>
+      </div>
+
+      <div class="card card--green">
+        <div class="card-label">Reports Forged</div>
+        <div class="card-value is-loading" id="val-forged">LOADING...</div>
+        <div class="card-sub">status = Report Forged</div>
+      </div>
+
+      <div class="card">
+        <div class="card-label">Solana Collected</div>
+        <div class="card-value is-loading" id="val-solana">LOADING...</div>
+        <div class="card-sub">confirmed payouts · SOL</div>
+      </div>
+
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         LOWER GRID
+    ═══════════════════════════════════════════ -->
+    <div class="section-label">// LIVE INTELLIGENCE</div>
+    <div class="lower">
+
+      <!-- Live Feed -->
+      <div class="panel">
+        <div class="panel-bar panel-bar--green"></div>
+        <div class="panel-header">
+          <span class="panel-title panel-title--green">⬡ LIVE STRIKE FEED</span>
+          <span class="panel-meta" id="feed-count">— TARGETS</span>
+        </div>
+        <div class="feed-body" id="feed-body">
+          <div class="feed-empty" id="feed-empty">AWAITING RADAR DATA...</div>
+        </div>
+      </div>
+
+      <!-- Status Panel -->
+      <div class="panel">
+        <div class="panel-bar panel-bar--cyan"></div>
+        <div class="panel-header">
+          <span class="panel-title panel-title--cyan">// SYSTEM STATUS</span>
+        </div>
+        <div class="status-body" id="status-body"></div>
+      </div>
+
+    </div>
+
+    <footer class="footer">
+      <span>EMPIRE AI // REVENUE PULSE v2.0</span>
+      <span>AUTO-REFRESH 12s // REALTIME ACTIVE</span>
+    </footer>
+
+  </main>
+
+  <script>
+    'use strict';
+
+    /* ═══════════════════════════════════════════════════════
+       CONFIG
+       ─────────────────────────────────────────────────────
+       Swap the placeholder values below with your real
+       credentials — or better, inject them at build time
+       via a server template / CI environment variable so
+       the source file never contains live secrets.
+    ═══════════════════════════════════════════════════════ */
+    const CONFIG = Object.freeze({
+      SUPABASE_URL:  'https://clmuzwbagzcyymfqswbn.supabase.co',
+      SUPABASE_KEY:  'YOUR_ANON_KEY_HERE',  // ← replace before deploying
+      TABLE:         'radar_targets',
+      POLL_MS:       12_000,
+      FEED_LIMIT:    10,
+    });
+
+    /* ═══════════════════════════════════════════════════════
+       SUPABASE CLIENT
+       Single instance — never recreate on re-renders.
+       persistSession: false — this is a HUD, not a user app.
+    ═══════════════════════════════════════════════════════ */
+    const db = window.supabase.createClient(
+      CONFIG.SUPABASE_URL,
+      CONFIG.SUPABASE_KEY,
+      { auth: { persistSession: false } }
+    );
+
+    /* ═══════════════════════════════════════════════════════
+       UTILITIES
+    ═══════════════════════════════════════════════════════ */
+
+    /** Compact number: 1400 → "1.4K", 2_000_000 → "2.0M" */
+    function fmtNumber(n) {
+      if (n == null) return '—';
+      if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + 'M';
+      if (n >= 1_000)     return (n / 1_000).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    /** HH:MM:SS from ISO string */
+    function fmtTime(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleTimeString('en-US', {
+        hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit',
+      });
+    }
+
+    /**
+     * Safe text setter — NEVER use innerHTML with untrusted data.
+     * textContent is XSS-safe by definition.
+     */
+    function setText(id, value) {
+      const el = document.getElementById(id);
+      if (el) el.textContent = value;
+    }
+
+    function showError(msg) {
+      setText('error-text', msg); // textContent — safe
+      document.getElementById('error-banner').classList.add('visible');
+    }
+    function clearError() {
+      document.getElementById('error-banner').classList.remove('visible');
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       DATA LAYER  — all Supabase queries isolated here
+    ═══════════════════════════════════════════════════════ */
+
+    async function fetchMetrics() {
+      const [totalRes, forgedRes, solanaRes] = await Promise.all([
+        db.from(CONFIG.TABLE).select('*', { count: 'exact', head: true }),
+        db.from(CONFIG.TABLE).select('*', { count: 'exact', head: true })
+          .eq('status', 'Report Forged'),
+        db.from(CONFIG.TABLE).select('solana_payout').eq('status', 'Report Forged'),
+      ]);
+
+      const err = totalRes.error || forgedRes.error || solanaRes.error;
+      if (err) throw err;
+
+      const total  = totalRes.count  ?? 0;
+      const forged = forgedRes.count ?? 0;
+      const solana = (solanaRes.data ?? [])
+        .reduce((sum, r) => sum + (parseFloat(r.solana_payout) || 0), 0);
+
+      return { total, forged, solana };
+    }
+
+    async function fetchFeed() {
+      const { data, error } = await db
+        .from(CONFIG.TABLE)
+        .select('business_name, created_at, status')
+        .order('created_at', { ascending: false })
+        .limit(CONFIG.FEED_LIMIT);
+
+      if (error) throw error;
+      return data ?? [];
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       RENDER LAYER  — pure DOM mutation, no fetch logic here
+    ═══════════════════════════════════════════════════════ */
+
+    function renderMetrics({ total, forged, solana }) {
+      const forgeRate  = total ? ((forged / total) * 100).toFixed(1) : '0.0';
+      const forgeRateN = parseFloat(forgeRate);
+
+      function setCard(id, text) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        el.classList.remove('is-loading');
+      }
+
+      setCard('val-strikes', fmtNumber(total));
+      setCard('val-forged',  fmtNumber(forged));
+      setCard('val-solana',  solana.toFixed(4) + ' SOL');
+
+      renderStatus({ total, forged, forgeRate, forgeRateN, solana });
+    }
+
+    function renderFeed(rows) {
+      const body  = document.getElementById('feed-body');
+      const empty = document.getElementById('feed-empty');
+      const count = document.getElementById('feed-count');
+
+      if (count) count.textContent = rows.length + ' TARGETS';
+
+      if (!rows.length) {
+        if (empty) empty.style.display = 'flex';
+        return;
+      }
+      if (empty) empty.style.display = 'none';
+
+      // Build DOM via fragment — never innerHTML with user data
+      const fragment = document.createDocumentFragment();
+
+      rows.forEach((row, i) => {
+        const forged = row.status === 'Report Forged';
+
+        const item = document.createElement('div');
+        item.className = 'feed-item';
+
+        const num = document.createElement('span');
+        num.className = 'feed-num';
+        num.textContent = String(i + 1).padStart(2, '0');
+
+        const dot = document.createElement('span');
+        dot.className = 'feed-dot';
+        dot.setAttribute('aria-hidden', 'true');
+
+        // ← textContent prevents any injected HTML from executing
+        const name = document.createElement('span');
+        name.className = 'feed-name';
+        name.textContent = row.business_name || 'UNNAMED TARGET';
+
+        const tag = document.createElement('span');
+        tag.className = 'feed-tag ' + (forged ? 'feed-tag--forged' : 'feed-tag--open');
+        tag.textContent = forged ? 'FORGED' : 'OPEN';
+
+        const time = document.createElement('span');
+        time.className = 'feed-time';
+        time.textContent = fmtTime(row.created_at);
+
+        item.append(num, dot, name, tag, time);
+        fragment.appendChild(item);
+      });
+
+      // Swap old items out atomically
+      body.querySelectorAll('.feed-item').forEach(el => el.remove());
+      body.appendChild(fragment);
+    }
+
+    function renderStatus({ total, forged, forgeRate, forgeRateN, solana }) {
+      const rateColor = forgeRateN >= 80 ? 'green' : forgeRateN >= 50 ? 'amber' : 'red';
+
+      const rows = [
+        { key: 'TOTAL ROWS',    val: fmtNumber(total),   color: '' },
+        { key: 'FORGED',        val: fmtNumber(forged),  color: 'green' },
+        { key: 'OPEN',          val: fmtNumber(total - forged), color: '' },
+        { divider: true },
+        { key: 'FORGE RATE',    val: forgeRate + '%',    color: rateColor },
+        { key: 'SOL COLLECTED', val: solana.toFixed(4),  color: 'green' },
+        { divider: true },
+        { key: 'LAST REFRESH',  val: new Date().toLocaleTimeString('en-US', { hour12: false }), color: 'dim' },
+        { key: 'REALTIME',      val: 'SUBSCRIBED',       color: 'green' },
+        { key: 'POLL',          val: (CONFIG.POLL_MS / 1000) + 's FALLBACK', color: 'dim' },
+      ];
+
+      const body = document.getElementById('status-body');
+      if (!body) return;
+
+      const frag = document.createDocumentFragment();
+
+      rows.forEach(r => {
+        if (r.divider) {
+          const d = document.createElement('div');
+          d.className = 'stat-divider';
+          frag.appendChild(d);
+          return;
+        }
+        const row = document.createElement('div');
+        row.className = 'stat-row';
+
+        const k = document.createElement('span');
+        k.className = 'stat-key';
+        k.textContent = r.key;
+
+        const v = document.createElement('span');
+        v.className = 'stat-val' + (r.color ? ' stat-val--' + r.color : '');
+        v.textContent = r.val;
+
+        row.append(k, v);
+        frag.appendChild(row);
+      });
+
+      body.replaceChildren(frag);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       CONTROLLER  — orchestrates fetch + render + error handling
+    ═══════════════════════════════════════════════════════ */
+
+    async function refresh() {
+      try {
+        const [metrics, feed] = await Promise.all([fetchMetrics(), fetchFeed()]);
+        renderMetrics(metrics);
+        renderFeed(feed);
+        clearError();
+      } catch (err) {
+        console.error('[RevenuePulse] refresh error:', err);
+        showError('CONN ERROR — ' + (err?.message ?? 'Check Supabase credentials.'));
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       REALTIME
+       Postgres change events → immediate refresh.
+       Polling is a safety-net, not the primary mechanism.
+    ═══════════════════════════════════════════════════════ */
+    function subscribeRealtime() {
+      db.channel('rp_radar_changes')
+        .on('postgres_changes',
+          { event: '*', schema: 'public', table: CONFIG.TABLE },
+          () => refresh()
+        )
+        .subscribe(status => {
+          if (status === 'SUBSCRIBED')    console.info('[RevenuePulse] realtime active');
+          if (status === 'CHANNEL_ERROR') console.warn('[RevenuePulse] realtime error — polling fallback active');
+        });
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       CLOCK
+    ═══════════════════════════════════════════════════════ */
+    function startClock() {
+      function tick() {
+        const now = new Date();
+        setText('clock',
+          now.toLocaleTimeString('en-US', { hour12: false }) + '  ' +
+          now.toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
+        );
+      }
+      tick();
+      setInterval(tick, 1000);
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       BOOT  — single entry point, runs once on page load
+    ═══════════════════════════════════════════════════════ */
+    (function init() {
+      startClock();
+      refresh();                              // immediate first paint
+      setInterval(refresh, CONFIG.POLL_MS);   // polling fallback
+      subscribeRealtime();                    // push-based primary
+    })();
+
+  </script>
+</body>
+</html>
